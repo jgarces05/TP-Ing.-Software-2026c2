@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Tokens de la cartilla de diseño, versión 1.
+   Todo lo que está acá sale del PDF y no se cambia por gusto:
+   si una decisión de diseño choca con esto, gana la cartilla.
+   ============================================================ */
+
+@theme {
+  /* ---- tipografías (sección 03) ---- */
+  --font-titulo: var(--fuente-titulo), "Segoe UI", system-ui, sans-serif;
+  --font-cuerpo: var(--fuente-cuerpo), "Segoe UI", system-ui, sans-serif;
+
+  /* ---- escala tipográfica (sección 03) ----
+     El cuerpo arranca en 18 px, no en 14 ni 16.
+     Nada por debajo de 15 px, y 15 px sólo para datos de apoyo. */
+  --text-dato: 40px;
+  --text-dato--line-height: 44px;
+  --text-dato--font-weight: 800;
+
+  --text-pantalla: 32px;
+  --text-pantalla--line-height: 36px;
+  --text-pantalla--font-weight: 800;
+
+  --text-ident: 26px;
+  --text-ident--line-height: 30px;
+  --text-ident--font-weight: 800;
+
+  --text-seccion: 24px;
+  --text-seccion--line-height: 30px;
+  --text-seccion--font-weight: 700;
+
+  --text-subtitulo: 20px;
+  --text-subtitulo--line-height: 28px;
+
+  --text-cuerpo: 18px;
+  --text-cuerpo--line-height: 28px;
+
+  --text-etiqueta: 16px;
+  --text-etiqueta--line-height: 20px;
+
+  --text-apoyo: 15px;
+  --text-apoyo--line-height: 22px;
+
+  /* ---- neutros cálidos (sección 02) ---- */
+  --color-fondo: #fbf8f4;
+  --color-superficie: #f2ece4;
+  --color-tarjeta: #ffffff;
+  --color-borde: #e3dad0;
+  --color-borde-fuerte: #c9bfb3;
+  --color-tinta: #241f1b;
+  --color-tinta-media: #4a433d;
+  --color-tinta-suave: #6e655d;
+
+  /* ---- primario y secundario (sección 02) ----
+     El azul es sólo para lo accionable: botón principal, enlaces,
+     foco de teclado. Nunca de fondo decorativo grande. */
+  --color-azul: #1f4e8c;
+  --color-azul-apretado: #163c6e;
+  --color-azul-claro: #e8eff7;
+  --color-terracota: #9a3d1e;
+  --color-rojo: #a32116;
+
+  /* ---- los cinco estados (sección 02) ----
+     Un preset puede renombrarlos y esconder los que no usa, pero no
+     puede agregar un sexto color ni cambiar el ícono de uno existente. */
+  --color-nuevo: #3f4b57;
+  --color-nuevo-fondo: #e7eaee;
+  --color-proceso: #1f4e8c;
+  --color-proceso-fondo: #e3ebf5;
+  --color-espera: #7a4e00;
+  --color-espera-fondo: #fbf0d8;
+  --color-revision: #5b3e8f;
+  --color-revision-fondo: #ede6f7;
+  --color-completo: #14663c;
+  --color-completo-fondo: #e0f0e6;
+
+  /* ---- radios (sección 04) ---- */
+  --radius-campo: 12px;
+  --radius-tarjeta: 16px;
+
+  /* ---- ancho de contenido en escritorio (sección 04) ---- */
+  --container-hoja: 1180px;
+}
+
+@layer base {
+  /* La cartilla define un único fondo cálido. No hay tema oscuro:
+     inventarlo sería apartarse de la sección 02. */
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    /* Se queda en 16 px para que la escala de espaciado de Tailwind
+       (4 · 8 · 12 · 16 · 24 · 32 · 48 · 64) coincida exactamente con
+       la escala de 4 px de la sección 04. El cuerpo va en 18 px abajo. */
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-fondo);
+    color: var(--color-tinta);
+    font-family: var(--font-cuerpo);
+    font-size: var(--text-cuerpo);
+    line-height: var(--text-cuerpo--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-titulo);
+    text-wrap: balance;
+  }
+
+  /* Anillo azul de 3 px, siempre visible. Nunca se saca. (sección 05) */
+  :focus-visible {
+    outline: 3px solid var(--color-azul);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Toda zona tocable respeta el mínimo de 48 px de la sección 04.
+     Los botones principales en celular suben a 56 px. */
+  button,
+  a[role="button"],
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

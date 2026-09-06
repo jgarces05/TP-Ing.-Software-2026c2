@@ -1,0 +1,367 @@
+"use client";
+
+// Capa de datos con dos backends.
+//
+// Si hay credenciales de Supabase, lee y escribe contra la base.
+// Si no las hay, usa los datos de ejemplo y los guarda en el navegador.
+// Las pantallas no se enteran de la diferencia: usan siempre estas funciones.
+//
+// Sirve para que los cuatro puedan clonar y levantar el proyecto sin esperar
+// a que alguien reparta las claves, y para que la demo no dependa del wifi.
+
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { supabase, haySupabase } from "./supabase";
+import { construirSemilla } from "./semilla";
+
+const LLAVE = "marmanager.datos.v1";
+const VACIO = {
+  negocio: null,
+  empleados: [],
+  clientes: [],
+  casos: [],
+  pasos: [],
+  eventos: [],
+  insumos: [],
+  turnos: [],
+};
+
+const Contexto = createContext(null);
+
+const nuevoId = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : "id" + Math.random().toString(36).slice(2);
+
+async function leerDeSupabase() {
+  const tablas = ["negocio", "empleado", "cliente", "caso", "paso", "evento", "insumo", "turno"];
+  const respuestas = await Promise.all(tablas.map((t) => supabase.from(t).select("*")));
+
+  const conError = respuestas.find((r) => r.error);
+  if (conError) throw conError.error;
+
+  const [negocio, empleados, clientes, casos, pasos, eventos, insumos, turnos] = respuestas.map(
+    (r) => r.data ?? []
+  );
+
+  return {
+    negocio: negocio[0] ?? null,
+    empleados,
+    clientes,
+    casos,
+    pasos,
+    eventos,
+    insumos,
+    turnos,
+  };
+}
+
+export function DatosProvider({ children }) {
+  const [datos, setDatos] = useState(VACIO);
+  const [cargando, setCargando] = useState(true);
+  const [fuente, setFuente] = useState(haySupabase ? "supabase" : "local");
+  const [aviso, setAviso] = useState(null);
+  // Confirmamos con el dato que la persona acaba de escribir, así sabe que
+  // guardó lo correcto (cartilla, sección 07).
+  const [exito, setExito] = useState(null);
+
+  // Carga inicial. Corre sólo en el navegador, así no hay diferencia entre
+  // lo que renderiza el servidor y lo que renderiza el cliente.
+  useEffect(() => {
+    let vivo = true;
+
+    (async () => {
+      if (haySupabase) {
+        try {
+          const traido = await leerDeSupabase();
+          if (!vivo) return;
+          if (traido.negocio) {
+            setDatos(traido);
+            setFuente("supabase");
+            setCargando(false);
+            return;
+          }
+          setAviso(
+            "La base de Supabase está vacía. Corré supabase/002_seed.sql para cargar los datos de ejemplo. Mientras tanto mostramos los datos locales."
+          );
+        } catch (e) {
+          if (!vivo) return;
+          setAviso(
+            "No se pudo leer la base de Supabase. Seguimos con los datos de ejemplo guardados en este navegador."
+          );
+        }
+      }
+
+      const guardado = typeof window !== "undefined" ? window.localStorage.getItem(LLAVE) : null;
+      if (!vivo) return;
+      setDatos(guardado ? JSON.parse(guardado) : construirSemilla());
+      setFuente("local");
+      setCargando(false);
+    })();
+
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  // En modo local, todo lo que se toca queda guardado en el navegador.
+  useEffect(() => {
+    if (cargando || fuente !== "local" || !datos.negocio) return;
+    try {
+      window.localStorage.setItem(LLAVE, JSON.stringify(datos));
+    } catch {
+      // Si el navegador no deja guardar, la sesión sigue andando en memoria.
+    }
+  }, [datos, cargando, fuente]);
+
+  const acciones = useMemo(() => {
+    const enSupabase = () => fuente === "supabase" && supabase;
+
+    // Aplica el cambio en pantalla ya, y lo manda a la base si la hay.
+    const escribir = async (tabla, fila, { insertar = false } = {}) => {
+      if (!enSupabase()) return;
+      const q = supabase.from(tabla);
+      const { error } = insertar ? await q.insert(fila) : await q.update(fila).eq("id", fila.id);
+      if (error) setAviso("No se pudo guardar en la base: " + error.message);
+    };
+
+    const borrar = async (tabla, id) => {
+      if (!enSupabase()) return;
+      const { error } = await supabase.from(tabla).delete().eq("id", id);
+      if (error) setAviso("No se pudo borrar en la base: " + error.message);
+    };
+
+    const anotar = (casoId, titulo, detalle, icono = "carpeta", autor = "Mostrador") => {
+      const evento = {
+        id: nuevoId(),
+        caso_id: casoId,
+        titulo,
+        detalle,
+        autor,
+        icono,
+        ocurrido_en: new Date().toISOString(),
+      };
+      setDatos((d) => ({ ...d, eventos: [evento, ...d.eventos] }));
+      escribir("evento", evento, { insertar: true });
+      return evento;
+    };
+
+    const parchearCaso = (casoId, cambios) => {
+      setDatos((d) => ({
+        ...d,
+        casos: d.casos.map((c) => (c.id === casoId ? { ...c, ...cambios } : c)),
+      }));
+      escribir("caso", { id: casoId, ...cambios });
+    };
+
+    return {
+      // ---------- casos ----------
+      // Devuelve el caso creado para que la pantalla de alta pueda navegar a él.
+      abrirCaso({ clienteId, nombreCliente, telefono, servicio, responsableId }) {
+        // El cliente se puede dar de alta desde la misma pantalla: el mostrador
+        // está apurado y con el cliente enfrente.
+        const cliente = clienteId
+          ? null
+          : {
+              id: nuevoId(),
+              negocio_id: datos.negocio.id,
+              nombre: nombreCliente,
+              telefono,
+              notas: "",
+            };
+        const idCliente = clienteId ?? cliente.id;
+
+        const numero = Math.max(0, ...datos.casos.map((c) => c.numero)) + 1;
+        const caso = {
+          id: nuevoId(),
+          negocio_id: datos.negocio.id,
+          numero,
+          cliente_id: idCliente,
+          servicio,
+          estado: responsableId ? "en_proceso" : "nuevo",
+          responsable_id: responsableId || null,
+          que_falta: responsableId ? "Está en el taller" : "Asignar a alguien del equipo",
+          abierto_en: new Date().toISOString(),
+        };
+        const evento = {
+          id: nuevoId(),
+          caso_id: caso.id,
+          titulo: "Caso abierto",
+          detalle: servicio + ".",
+          autor: "Mostrador",
+          icono: "carpeta",
+          ocurrido_en: caso.abierto_en,
+        };
+
+        setDatos((d) => ({
+          ...d,
+          clientes: cliente
+            ? [...d.clientes, cliente]
+            : telefono
+              ? d.clientes.map((c) => (c.id === idCliente ? { ...c, telefono } : c))
+              : d.clientes,
+          casos: [caso, ...d.casos],
+          eventos: [evento, ...d.eventos],
+        }));
+
+        if (cliente) escribir("cliente", cliente, { insertar: true });
+        else if (telefono) escribir("cliente", { id: idCliente, telefono });
+        escribir("caso", caso, { insertar: true });
+        escribir("evento", evento, { insertar: true });
+
+        return caso;
+      },
+
+      asignarResponsable(casoId, empleadoId) {
+        const persona = datos.empleados.find((e) => e.id === empleadoId);
+        parchearCaso(casoId, {
+          responsable_id: empleadoId,
+          estado: "en_proceso",
+          que_falta: "Está en el taller",
+        });
+        anotar(casoId, "Asignaron el caso", `Lo va a atender ${persona?.nombre ?? "alguien del equipo"}.`, "persona-mas", "Mostrador");
+      },
+
+      cambiarEstado(casoId, estado, queFalta, textoHistorial) {
+        parchearCaso(casoId, { estado, que_falta: queFalta });
+        anotar(casoId, textoHistorial.titulo, textoHistorial.detalle, textoHistorial.icono);
+      },
+
+      // ---------- pasos del presupuesto ----------
+      // Aprobar, rechazar y volver atrás escriben los tres en la base.
+      // Así "Volver atrás" sobrevive a un F5, en vez de vivir sólo en memoria.
+      responderPaso(pasoId, estado) {
+        const paso = datos.pasos.find((p) => p.id === pasoId);
+        if (!paso) return;
+
+        setDatos((d) => ({
+          ...d,
+          pasos: d.pasos.map((p) => (p.id === pasoId ? { ...p, estado } : p)),
+        }));
+        escribir("paso", { id: pasoId, estado });
+
+        const dicho = {
+          aprobado: "Lo aprobó el cliente",
+          rechazado: "El cliente no lo hace",
+          esperando: "Volvieron atrás la respuesta",
+        }[estado];
+        anotar(paso.caso_id, dicho, `${paso.nombre} · $${Number(paso.monto).toLocaleString("es-AR")}`, estado === "aprobado" ? "listo" : "nota", "Encargado");
+      },
+
+      // ---------- inventario ----------
+      marcarInsumoLlegado(insumoId) {
+        const insumo = datos.insumos.find((i) => i.id === insumoId);
+        if (!insumo) return;
+        setDatos((d) => ({
+          ...d,
+          insumos: d.insumos.map((i) =>
+            i.id === insumoId ? { ...i, estado: "en_stock", caso_id: null } : i
+          ),
+        }));
+        escribir("insumo", { id: insumoId, estado: "en_stock", caso_id: null });
+
+        if (insumo.caso_id) {
+          parchearCaso(insumo.caso_id, { estado: "en_proceso", que_falta: "Está en el taller" });
+          anotar(insumo.caso_id, "Llegó el insumo", `${insumo.nombre}. Ya se puede seguir.`, "camion", "Mostrador");
+        }
+      },
+
+      agregarInsumo({ nombre, descripcion, cantidad, minimo, unidad }) {
+        const insumo = {
+          id: nuevoId(),
+          negocio_id: datos.negocio.id,
+          nombre,
+          descripcion,
+          cantidad: Number(cantidad) || 0,
+          minimo: Number(minimo) || 0,
+          unidad: unidad || "unidad",
+          estado: "en_stock",
+          caso_id: null,
+        };
+        setDatos((d) => ({ ...d, insumos: [...d.insumos, insumo] }));
+        escribir("insumo", insumo, { insertar: true });
+      },
+
+      ajustarCantidad(insumoId, delta) {
+        const insumo = datos.insumos.find((i) => i.id === insumoId);
+        if (!insumo) return;
+        const cantidad = Math.max(0, insumo.cantidad + delta);
+        setDatos((d) => ({
+          ...d,
+          insumos: d.insumos.map((i) => (i.id === insumoId ? { ...i, cantidad } : i)),
+        }));
+        escribir("insumo", { id: insumoId, cantidad });
+      },
+
+      eliminarInsumo(insumoId) {
+        setDatos((d) => ({ ...d, insumos: d.insumos.filter((i) => i.id !== insumoId) }));
+        borrar("insumo", insumoId);
+      },
+
+      // ---------- clientes ----------
+      agregarCliente({ nombre, telefono, notas }) {
+        const cliente = {
+          id: nuevoId(),
+          negocio_id: datos.negocio.id,
+          nombre,
+          telefono,
+          notas: notas || "",
+        };
+        setDatos((d) => ({ ...d, clientes: [...d.clientes, cliente] }));
+        escribir("cliente", cliente, { insertar: true });
+      },
+
+      // ---------- agenda ----------
+      agregarTurno({ clienteId, motivo, empiezaEn, minutos }) {
+        const turno = {
+          id: nuevoId(),
+          negocio_id: datos.negocio.id,
+          cliente_id: clienteId || null,
+          caso_id: null,
+          motivo,
+          empieza_en: new Date(empiezaEn).toISOString(),
+          minutos: Number(minutos) || 60,
+          estado: "agendado",
+        };
+        setDatos((d) => ({ ...d, turnos: [...d.turnos, turno] }));
+        escribir("turno", turno, { insertar: true });
+      },
+
+      cambiarEstadoTurno(turnoId, estado) {
+        setDatos((d) => ({
+          ...d,
+          turnos: d.turnos.map((t) => (t.id === turnoId ? { ...t, estado } : t)),
+        }));
+        escribir("turno", { id: turnoId, estado });
+      },
+
+      // ---------- negocio ----------
+      cambiarRubro(rubro) {
+        setDatos((d) => ({ ...d, negocio: { ...d.negocio, rubro } }));
+        escribir("negocio", { id: datos.negocio?.id, rubro });
+      },
+
+      // Vuelve al estado inicial conocido. Se usa antes de la demo.
+      reiniciar() {
+        if (fuente !== "local") {
+          setAviso("Estás conectado a Supabase: para reiniciar, corré supabase/002_seed.sql.");
+          return;
+        }
+        window.localStorage.removeItem(LLAVE);
+        setDatos(construirSemilla());
+      },
+
+      avisarExito: (texto) => setExito(texto),
+      descartarAviso: () => setAviso(null),
+      descartarExito: () => setExito(null),
+    };
+  }, [datos, fuente]);
+
+  const valor = { ...datos, cargando, fuente, aviso, exito, ...acciones };
+  return <Contexto.Provider value={valor}>{children}</Contexto.Provider>;
+}
+
+export function useDatos() {
+  const v = useContext(Contexto);
+  if (!v) throw new Error("useDatos tiene que usarse adentro de <DatosProvider>");
+  return v;
+}
